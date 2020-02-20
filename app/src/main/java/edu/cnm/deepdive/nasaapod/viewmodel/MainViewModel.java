@@ -60,18 +60,23 @@ public class MainViewModel extends AndroidViewModel implements LifecycleObserver
     throwable.setValue(null);
     pending.add(
         repository.get(date)
-            .doOnSuccess(apod::postValue)
-            .doOnError(throwable::postValue)
-            .subscribe() // How you make tasks work in Reactive x
+             .subscribe( // How you make tasks work in Reactive x
+                apod::postValue,
+                throwable::postValue
+            )
     );
   }
 
   public void getImage(@NonNull Apod apod, @NonNull Consumer<String> pathConsumer) {
     throwable.setValue(null);
-    repository.getImage(apod)
-        .doOnSuccess(pathConsumer)
-        .doOnError(throwable::postValue)
-        .subscribe();
+    pending.add(
+        repository.getImage(apod)
+            .observeOn(AndroidSchedulers.mainThread())
+         .subscribe(
+            pathConsumer,
+            throwable::setValue
+         )
+    );
   }
 
   @SuppressWarnings("unused")

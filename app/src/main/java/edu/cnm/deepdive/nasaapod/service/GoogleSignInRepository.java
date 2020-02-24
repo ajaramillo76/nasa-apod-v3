@@ -23,7 +23,7 @@ public class GoogleSignInRepository {
   private GoogleSignInRepository() {
     account = new MutableLiveData<>();
     throwable = new MutableLiveData<>();
-    GoogleSignInOptions options; new GoogleSignInOptions.Builder()
+    GoogleSignInOptions options = new GoogleSignInOptions.Builder()
         .requestEmail()
         .requestId()
         .requestProfile()

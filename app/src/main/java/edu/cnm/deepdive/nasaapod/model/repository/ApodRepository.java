@@ -1,7 +1,16 @@
 package edu.cnm.deepdive.nasaapod.model.repository;
 
 import android.app.Application;
+import android.content.ContentResolver;
+import android.content.ContentValues;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Build.VERSION;
+import android.os.Build.VERSION_CODES;
 import android.os.Environment;
+import android.provider.MediaStore.Audio.Media;
+import android.provider.MediaStore.MediaColumns;
+import android.webkit.MimeTypeMap;
 import androidx.annotation.NonNull;
 import androidx.lifecycle.LiveData;
 import edu.cnm.deepdive.nasaapod.BuildConfig;
@@ -13,6 +22,7 @@ import edu.cnm.deepdive.nasaapod.model.entity.Apod.MediaType;
 import edu.cnm.deepdive.nasaapod.model.pojo.ApodWithStats;
 import edu.cnm.deepdive.nasaapod.service.ApodDatabase;
 import edu.cnm.deepdive.nasaapod.service.ApodService;
+import io.reactivex.Completable;
 import io.reactivex.Maybe;
 import io.reactivex.Single;
 import io.reactivex.SingleSource;
@@ -36,6 +46,7 @@ public class ApodRepository {
   private static final Pattern URL_FILENAME_PATTERN =
       Pattern.compile("^.*/([^/#?]+)(?:\\?.*)?(?:#.*)?$");
   private static final String LOCAT_FILENAME_FORMAT = "%1$tY%1$tm%1$td-%2$s";
+  private static final String MEDIA_RECORD_FAILURE = "Unable to create MediaStore record.";
 
   private final ApodDatabase database;
   private final ApodService nasa;
@@ -103,6 +114,60 @@ public class ApodRepository {
         );
   }
 
+  public Completable downloadImage(@NonNull Apod apod) {
+    if (apod.getMediaType() != MediaType.IMAGE) {
+      throw new IllegalArgumentException();
+    }
+    String url = (apod.getHdUrl() != null) ? apod.getHdUrl() : apod.getUrl();
+    return nasa.getFile(url)
+        .subscribeOn(Schedulers.from(networkPool))
+        .map(body -> {
+          ContentResolver resolver = context.getContentResolver();
+          Uri uri = getMediaUri(resolver, url, apod.getTitle());
+          try (
+              InputStream input = body.byteStream();
+              OutputStream output = resolver.openOutputStream(uri);
+              ) {
+            copy(input, output);
+          } catch (IOException ex) {
+            resolver.delete(uri, null, null);
+            // TODO Throw new exception?
+          }
+          return true;
+        })
+        .ignoreElement();
+  }
+
+  private Uri getMediaUri(@NonNull ContentResolver resolver, @NonNull String sourceUrl,
+      @NonNull String title) throws IOException {
+    String extension = MimeTypeMap.getFileExtensionFromUrl(sourceUrl);
+    MimeTypeMap map = MimeTypeMap.getSingleton();
+    String mimeType = map.getMimeTypeFromExtension(extension);
+    ContentValues contentValues = new ContentValues();
+    contentValues.put(MediaColumns.DISPLAY_NAME, title);
+    contentValues.put(MediaColumns.MIME_TYPE, mimeType);
+    if (VERSION.SDK_INT >= VERSION_CODES.Q) {
+      contentValues.put(MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES);
+    }
+    Uri uri = resolver.insert(Media.EXTERNAL_CONTENT_URI, contentValues);
+    if (uri == null) {
+      throw new IOException(MEDIA_RECORD_FAILURE);
+    }
+    return uri;
+  }
+
+  private long copy(InputStream input, OutputStream output) throws IOException {
+    byte[] buffer = new byte[16_384];
+    long totalBytes = 0;
+    int bytesRead;
+    do {
+      if ((bytesRead = input.read(buffer)) > 0) {
+        output.write(buffer, 0, bytesRead);
+        totalBytes += bytesRead;
+      }
+    } while (bytesRead >= 0);
+    return totalBytes;
+  }
   private String download(ResponseBody body, File file) throws IOException {
     try (
         InputStream input = body.byteStream();
